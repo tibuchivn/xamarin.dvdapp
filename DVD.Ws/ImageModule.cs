@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using DVD.Ws.Data;
@@ -14,9 +15,15 @@ namespace DVD.Ws
         {
             this.dbContext = new Context();
             Get["/"] = _ => GetRandomImage();
+            Get["/url"] = _ =>
+            {
+                var response = (Response) GetRandomImage("slack");
+                response.ContentType = "application/json";
+                return response;
+            };
         }
 
-        private string GetRandomImage()
+        private string GetRandomImage(string returnType = "json")
         {
             string imgUrl = string.Empty;
             bool isDone = false;
@@ -29,7 +36,26 @@ namespace DVD.Ws
                     isDone = true;
                 }
             }
-            return JsonConvert.SerializeObject(new ImageApiData {Url = imgUrl});
+            if (returnType == "json")
+            {
+                return JsonConvert.SerializeObject(new ImageApiData { Url = imgUrl });
+            }
+            else if (returnType == "slack")
+            {
+                return JsonConvert.SerializeObject(new ImageSlackData()
+                {
+                    ResponseType = "in_channel",
+                    Text = "enjoy",
+                    ImageSlackAttachmentImages = new List<ImageSlackAttachmentImage>
+                    {
+                        new ImageSlackAttachmentImage {ImageUrl = imgUrl}
+                    }
+                });
+            }
+            else
+            {
+                return imgUrl;
+            }
         }
 
         private bool CheckImageUrlExists(string url)
@@ -54,5 +80,21 @@ namespace DVD.Ws
     public class ImageApiData
     {
         public string Url { get; set; }
+    }
+
+    public class ImageSlackData
+    {
+        [JsonProperty("response_type")]
+        public string ResponseType { get; set; }
+        [JsonProperty("text")]
+        public string Text { get; set; }
+        [JsonProperty("attachments")]
+        public List<ImageSlackAttachmentImage> ImageSlackAttachmentImages { get; set; }
+    }
+
+    public class ImageSlackAttachmentImage
+    {
+        [JsonProperty("image_url")]
+        public string ImageUrl { get; set; }
     }
 }
