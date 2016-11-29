@@ -11,6 +11,7 @@ namespace DVD.Ws.Data
             Database.SetInitializer(new NullDatabaseInitializer<Context>());
         }
         public DbSet<ImgLink> Images { get; set; }
+        public DbSet<ApiLog> ApiLogs { get; set; }
     }
 
     [Table("ImgLink")]
@@ -27,5 +28,14 @@ namespace DVD.Ws.Data
         public bool? IsBadURL { get; set; }
         public bool? IsCheckLive { get; set; }
         public int? HotLevel { get; set; }
+    }
+
+    [Table("ApiLog")]
+    public class ApiLog
+    {
+        public int Id { get; set; }
+        public string UserName { get; set; }
+        public DateTime CallDate { get; set; }
+        public int CallCount { get; set; }
     }
 }
