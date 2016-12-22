@@ -11,6 +11,7 @@ using System.Text;
 using System.Web;
 using RestSharp;
 using System.Threading.Tasks;
+using System.Net.Http;
 
 namespace DVD.Ws
 {
@@ -28,25 +29,44 @@ namespace DVD.Ws
             Get["/"] = _ => GetRandomImage();
             Get["/url"] = _ =>
             {
-                var response = (Response) GetRandomImage("slack");
+                if (!RequestIsInWhiteList(Request.Query["channel_id"]))
+                {
+                    var githubStatus = GetGithubBuildStatus();
+                    var githubResponse = (Response)githubStatus;
+                    githubResponse.ContentType = "application/json";
+                    return githubResponse;
+                }
+
+                var data = JsonConvert.SerializeObject(new ImageSlackData()
+                {
+                    ResponseType = "in_channel",
+                    //Text = $"{Request.Query["user_name"]} is requesting {Request.Query["text"]}"
+                    Text = $""
+                }, Formatting.None, ignoreNullValueSetting);
+                var response = (Response) data;
                 response.ContentType = "application/json";
+                Task.Factory.StartNew(() => { GetRandomImage("slack", Request.Query["response_url"], Request.Query["user_name"], Request.Query["channel_id"], Request.Query["text"]); });
                 return response;
             };
         }
 
-        private string GetRandomImage(string returnType = "json")
+        private string GetRandomImage(string returnType = "json", string responseUrl = "", string userName = "", string channelID = "", string text = "")
         {
-            if (!RequestIsInWhiteList()) return GetGithubBuildStatus();
-            string imgUrl = string.Empty;
-            bool isDone = false;
-            while (!isDone)
+            var query = $"select top 1 linkimg from imglink where isbadurl=0";
+            if (RequestContainKeyword(text))
             {
-                var image = dbContext.Images.Where(x => x.IsBadURL == false).OrderBy(x => Guid.NewGuid()).First();
-                if (CheckImageUrlExists(image.linkimg))
-                {
-                    imgUrl = image.linkimg;
-                    isDone = true;
-                }
+                query = $"{query} and isnice = 1";
+            }
+            else
+            {
+                query = $"{query} and (isnice = 0 or isnice is null)";
+            }
+            query = $"{query} order by checksum(newid())";
+            WriteLog(query);
+            var imgUrl = dbContext.Database.SqlQuery<string>(query).First();
+            while (!CheckImageUrlExists(imgUrl))
+            {
+                imgUrl = dbContext.Database.SqlQuery<string>(query).First();
             }
             if (returnType == "json")
             {
@@ -54,16 +74,29 @@ namespace DVD.Ws
             }
             else if (returnType == "slack")
             {
-                Task.Factory.StartNew(() => { LogApiCall(Request.Query["user_name"]); });
-                return JsonConvert.SerializeObject(new ImageSlackData()
+                Task.Factory.StartNew(() => { LogApiCall(userName); });
+                var data = JsonConvert.SerializeObject(new ImageSlackData()
                 {
                     ResponseType = "in_channel",
-                    Text = "enjoy",
+                    Text = $"enjoy {userName}",
                     ImageSlackAttachmentImages = new List<ImageSlackAttachmentImage>
                     {
                         new ImageSlackAttachmentImage {ImageUrl = imgUrl}
                     }
                 }, Formatting.None, ignoreNullValueSetting);
+                try
+                {
+                    var client = new HttpClient();
+                    var content = new StringContent(data, Encoding.UTF8, "application/json");
+                    var result = client.PostAsync(responseUrl, content).Result;
+                    //WriteLog($"{responseUrl} - {result}");
+                }
+                catch (Exception ex)
+                {
+                    WriteLog(ex.ToString());
+                }
+                
+                return data;
             }
             else
             {
@@ -73,7 +106,7 @@ namespace DVD.Ws
 
         private string GetGithubBuildStatus()
         {
-            string branchName = Request.Query["text"];
+            string branchName = string.IsNullOrEmpty(Request.Query["text"]) ? "master" : Request.Query["text"];
             if (!string.IsNullOrEmpty(branchName))
             {
                 branchName = HttpUtility.UrlEncode(branchName);
@@ -93,10 +126,10 @@ namespace DVD.Ws
                         Text = $"Branch {branchName} - Status {buildResult.Status.ToUpper()}",
                         CirlceCiSlackAttachmentTextList = new List<CirlceCiSlackAttachmentText>
                         {
-                            new CirlceCiSlackAttachmentText { Text = buildResult.AuthorName },
-                            new CirlceCiSlackAttachmentText { Text = buildResult.Subject },
-                            new CirlceCiSlackAttachmentText { Text = buildResult.Body },
-                            new CirlceCiSlackAttachmentText { Text = buildResult.BuildUrl }
+                            new CirlceCiSlackAttachmentText { Text = "Author: " + buildResult.AuthorName },
+                            new CirlceCiSlackAttachmentText { Text = "Subject: " + buildResult.Subject },
+                            new CirlceCiSlackAttachmentText { Text = "Body: " + buildResult.Body },
+                            new CirlceCiSlackAttachmentText { Text = "CircleCI Url: " + buildResult.BuildUrl }
                         }
                     }, Formatting.None, ignoreNullValueSetting);
                 }
@@ -131,10 +164,10 @@ namespace DVD.Ws
             return exists;
         }
 
-        private bool RequestIsInWhiteList()
+        private bool RequestIsInWhiteList(string channelId)
         {
             var whiteListConfig = ConfigurationManager.AppSettings["whitelist"];
-            string queryString = Request.Query["channel_id"];
+            string queryString = channelId;
             //DebugLog();
             WriteLog(queryString);
             if (!string.IsNullOrEmpty(whiteListConfig) && !string.IsNullOrEmpty(queryString))
@@ -144,6 +177,19 @@ namespace DVD.Ws
                 {
                     if (queryString.Contains(url)) return true;
                 }
+            }
+            return false;
+        }
+
+        private bool RequestContainKeyword(string command)
+        {
+            var keywordConfig = ConfigurationManager.AppSettings["keyword"];
+            string text = command;
+            if (!string.IsNullOrEmpty(keywordConfig) && !string.IsNullOrEmpty(text))
+            {
+                var keywords = keywordConfig.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                var splittedText = text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                return keywords.Intersect(splittedText).Any();
             }
             return false;
         }

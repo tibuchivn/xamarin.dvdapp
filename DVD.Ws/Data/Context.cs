@@ -28,6 +28,7 @@ namespace DVD.Ws.Data
         public bool? IsBadURL { get; set; }
         public bool? IsCheckLive { get; set; }
         public int? HotLevel { get; set; }
+        public bool? IsNice { get; set; }
     }
 
     [Table("ApiLog")]
